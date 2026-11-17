@@ -1,0 +1,22 @@
+# Secrets and personal configuration
+.env
+.env.*
+!.env.example
+samconfig.toml
+samconfig.*.toml
+!samconfig.example.toml
+*.pem
+*.key
+
+# Build, virtualenv, caches
+.aws-sam/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

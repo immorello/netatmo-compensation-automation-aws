@@ -1,0 +1,388 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Netatmo TRV compensator - every 10 minutes sets a compensated manual setpoint
+  on a Netatmo valve using a Netatmo weather-station module as the reference
+  temperature. Manual setpoints expire by themselves (dead-man switch).
+
+Parameters:
+  HomeId:
+    Type: String
+    Description: Netatmo home id (from /api/homesdata)
+  RoomId:
+    Type: String
+    Description: Room id of the valve
+  StationDeviceId:
+    Type: String
+    Description: MAC address of the main weather station (70:ee:50:...)
+  IndoorModuleId:
+    Type: String
+    Default: ""
+    Description: Optional additional indoor module (NAModule4). Empty = use the main station (NAMain)
+  MaxOffset:
+    Type: Number
+    Default: 3.0
+    Description: Maximum correction in degrees C
+  MinOffset:
+    Type: Number
+    Default: 0.0
+    Description: Minimum correction in degrees C (0 = never correct downwards)
+  Hysteresis:
+    Type: Number
+    Default: 0.5
+    Description: Minimum setpoint change that justifies a write
+  ManualDurationMinutes:
+    Type: Number
+    Default: 40
+    MinValue: 15
+    Description: Duration of the manual setpoint (dead-man switch)
+  RenewBeforeMinutes:
+    Type: Number
+    Default: 15
+    Description: Renew the endtime when fewer than N minutes are left
+  MaxSensorAgeMinutes:
+    Type: Number
+    Default: 30
+    Description: Module readings older than this are considered stale
+  DryRun:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: When true, log decisions without writing to the valve
+  ParameterPrefix:
+    Type: String
+    Default: /netatmo-trv
+    AllowedPattern: ^/[A-Za-z0-9_.\-/]*[A-Za-z0-9_.\-]$
+    Description: SSM Parameter Store prefix (no trailing slash)
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Optional email for error alarms. Empty = no alarm / SNS topic
+  DashboardUser:
+    Type: String
+    Default: admin
+    NoEcho: true
+    AllowedPattern: ^[^:]+$
+    Description: Username for the dashboard (HTTP Basic Auth)
+  DashboardPassword:
+    Type: String
+    Default: ""
+    NoEcho: true
+    AllowedPattern: ^$|^[^:]{12,}$
+    ConstraintDescription: empty (no dashboard) or at least 12 characters, no ':'
+    Description: Dashboard password. Empty = no dashboard is created
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+  HasDashboard: !Not [!Equals [!Ref DashboardPassword, ""]]
+
+Resources:
+  CompensatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Netatmo TRV compensator
+      CodeUri: src/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 30
+      ReservedConcurrentExecutions: 1
+      # No VpcConfig: the function must reach api.netatmo.com without a NAT.
+      Environment:
+        Variables:
+          HOME_ID: !Ref HomeId
+          ROOM_ID: !Ref RoomId
+          STATION_DEVICE_ID: !Ref StationDeviceId
+          INDOOR_MODULE_ID: !Ref IndoorModuleId
+          MAX_OFFSET: !Ref MaxOffset
+          MIN_OFFSET: !Ref MinOffset
+          HYSTERESIS: !Ref Hysteresis
+          MANUAL_DURATION_MINUTES: !Ref ManualDurationMinutes
+          RENEW_BEFORE_MINUTES: !Ref RenewBeforeMinutes
+          MAX_SENSOR_AGE_MINUTES: !Ref MaxSensorAgeMinutes
+          DRY_RUN: !Ref DryRun
+          PARAMETER_PREFIX: !Ref ParameterPrefix
+          DASHBOARD_BUCKET: !If [HasDashboard, !Ref DashboardBucket, ""]
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: ParameterStoreAccess
+              Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParameterPrefix}/*
+      # SecureString parameters use the AWS managed key aws/ssm: its key policy
+      # already allows Encrypt/Decrypt via SSM for principals of this account.
+
+  CompensatorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CompensatorFunction}
+      RetentionInDays: 30
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: InvokeCompensator
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt CompensatorFunction.Arn
+                  - !Sub ${CompensatorFunction.Arn}:*
+
+  CompensatorSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Description: Run the Netatmo TRV compensator every 10 minutes
+      ScheduleExpression: rate(10 minutes)
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !GetAtt CompensatorFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        RetryPolicy:
+          # A failed run is simply retried by the next tick.
+          MaximumRetryAttempts: 0
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
+
+  ErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmDescription: Netatmo TRV compensator failing for 30 minutes
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CompensatorFunction
+      Statistic: Sum
+      Period: 600
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # ------------------------------------------------------------------------ #
+  # Dashboard (optional): private S3 bucket + CloudFront with Basic Auth.
+  #   /          -> static site in S3 (dashboard/), data/*.json written by the Lambda
+  #   /api/run   -> Lambda Function URL (forced run), signed by CloudFront (OAC)
+  # ------------------------------------------------------------------------ #
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Condition: HasDashboard
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: HasDashboard
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${DashboardBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DashboardDistribution}
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt DashboardBucket.Arn
+              - !Sub ${DashboardBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  DashboardDataPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasDashboard
+    Properties:
+      PolicyName: DashboardStatusWrite
+      Roles: [!Ref CompensatorFunctionRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource: !Sub ${DashboardBucket.Arn}/data/*
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt DashboardBucket.Arn
+            Condition:
+              StringLike:
+                s3:prefix: data/*
+
+  CompensatorFunctionUrl:
+    Type: AWS::Lambda::Url
+    Condition: HasDashboard
+    Properties:
+      TargetFunctionArn: !GetAtt CompensatorFunction.Arn
+      AuthType: AWS_IAM
+
+  FunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasDashboard
+    Properties:
+      FunctionName: !Ref CompensatorFunction
+      Action: lambda:InvokeFunctionUrl
+      FunctionUrlAuthType: AWS_IAM
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DashboardDistribution}
+
+  FunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasDashboard
+    Properties:
+      FunctionName: !Ref CompensatorFunction
+      Action: lambda:InvokeFunction
+      Principal: cloudfront.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DashboardDistribution}
+
+  S3OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: HasDashboard
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-s3
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  LambdaOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: HasDashboard
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-lambda
+        OriginAccessControlOriginType: lambda
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  BasicAuthFunction:
+    Type: AWS::CloudFront::Function
+    Condition: HasDashboard
+    Properties:
+      Name: !Sub ${AWS::StackName}-basic-auth
+      AutoPublish: true
+      FunctionConfig:
+        Comment: HTTP Basic Auth for the dashboard
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub
+        - |
+          function handler(event) {
+            var auth = event.request.headers.authorization;
+            if (auth && auth.value === 'Basic ${Credentials}') {
+              return event.request;
+            }
+            return {
+              statusCode: 401,
+              statusDescription: 'Unauthorized',
+              headers: { 'www-authenticate': { value: 'Basic realm="Netatmo TRV", charset="UTF-8"' } }
+            };
+          }
+        - Credentials: !Base64
+            Fn::Sub: ${DashboardUser}:${DashboardPassword}
+
+  DashboardDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: HasDashboard
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Netatmo TRV compensator dashboard
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+        Origins:
+          - Id: site
+            DomainName: !GetAtt DashboardBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt S3OriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - Id: api
+            DomainName: !Select [2, !Split ["/", !GetAtt CompensatorFunctionUrl.FunctionUrl]]
+            OriginAccessControlId: !GetAtt LambdaOriginAccessControl.Id
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+              OriginReadTimeout: 30
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # Managed-CachingDisabled
+          Compress: true
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt BasicAuthFunction.FunctionMetadata.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt BasicAuthFunction.FunctionMetadata.FunctionARN
+
+Outputs:
+  FunctionName:
+    Value: !Ref CompensatorFunction
+  LogGroup:
+    Value: !Ref CompensatorLogGroup
+  AlarmTopicArn:
+    Condition: HasAlarmEmail
+    Value: !Ref AlarmTopic
+  DashboardUrl:
+    Condition: HasDashboard
+    Value: !Sub https://${DashboardDistribution.DomainName}/
+  DashboardBucketName:
+    Condition: HasDashboard
+    Value: !Ref DashboardBucket

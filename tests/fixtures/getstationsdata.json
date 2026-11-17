@@ -1,0 +1,56 @@
+{
+  "status": "ok",
+  "time_server": 1763380800,
+  "body": {
+    "devices": [
+      {
+        "_id": "70:ee:50:aa:bb:cc",
+        "type": "NAMain",
+        "module_name": "Indoor",
+        "station_name": "Casa",
+        "data_type": [
+          "Temperature",
+          "CO2",
+          "Humidity",
+          "Noise",
+          "Pressure"
+        ],
+        "reachable": true,
+        "dashboard_data": {
+          "time_utc": 1763380500,
+          "Temperature": 21.0,
+          "CO2": 600,
+          "Humidity": 50,
+          "Noise": 35,
+          "Pressure": 1015,
+          "temp_trend": "stable"
+        },
+        "modules": [
+          {
+            "_id": "02:00:00:aa:bb:cc",
+            "type": "NAModule1",
+            "module_name": "Outdoor",
+            "reachable": true,
+            "dashboard_data": {
+              "time_utc": 1763380450,
+              "Temperature": 8.2,
+              "Humidity": 80
+            }
+          },
+          {
+            "_id": "03:00:00:aa:bb:cc",
+            "type": "NAModule4",
+            "module_name": "Studio",
+            "reachable": true,
+            "dashboard_data": {
+              "time_utc": 1763380450,
+              "Temperature": 20.1,
+              "CO2": 700,
+              "Humidity": 48
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,229 @@
+{
+  "body": {
+    "homes": [
+      {
+        "id": "5c810xxxxxxxxxxxxxxxxxxx",
+        "name": "Casa",
+        "timezone": "Europe/Rome",
+        "country": "IT",
+        "therm_mode": "schedule",
+        "therm_setpoint_default_duration": 180,
+        "rooms": [
+          {
+            "id": "2746182631",
+            "name": "Studio",
+            "type": "bedroom",
+            "module_ids": [
+              "09:00:00:aa:bb:cc"
+            ]
+          },
+          {
+            "id": "1111111111",
+            "name": "Soggiorno",
+            "type": "livingroom",
+            "module_ids": [
+              "09:00:00:aa:bb:01",
+              "09:00:00:aa:bb:02"
+            ]
+          }
+        ],
+        "schedules": [
+          {
+            "id": "cool1",
+            "name": "Estate",
+            "type": "cooling",
+            "selected": true,
+            "timetable": [
+              {
+                "zone_id": 0,
+                "m_offset": 0
+              }
+            ],
+            "zones": [
+              {
+                "id": 0,
+                "name": "Comfort",
+                "type": 0,
+                "rooms": [
+                  {
+                    "id": "2746182631",
+                    "therm_setpoint_temperature": 26
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "old1",
+            "name": "Vecchio",
+            "type": "therm",
+            "selected": false,
+            "timetable": [
+              {
+                "zone_id": 0,
+                "m_offset": 0
+              }
+            ],
+            "zones": [
+              {
+                "id": 0,
+                "name": "Comfort",
+                "type": 0,
+                "rooms": [
+                  {
+                    "id": "2746182631",
+                    "therm_setpoint_temperature": 25
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "therm1",
+            "name": "Inverno",
+            "type": "therm",
+            "selected": true,
+            "hg_temp": 7,
+            "away_temp": 12,
+            "timetable": [
+              {
+                "zone_id": 1,
+                "m_offset": 0
+              },
+              {
+                "zone_id": 0,
+                "m_offset": 420
+              },
+              {
+                "zone_id": 1,
+                "m_offset": 1380
+              },
+              {
+                "zone_id": 0,
+                "m_offset": 1860
+              },
+              {
+                "zone_id": 1,
+                "m_offset": 2820
+              },
+              {
+                "zone_id": 0,
+                "m_offset": 3300
+              },
+              {
+                "zone_id": 1,
+                "m_offset": 4260
+              },
+              {
+                "zone_id": 0,
+                "m_offset": 4740
+              },
+              {
+                "zone_id": 1,
+                "m_offset": 5700
+              },
+              {
+                "zone_id": 0,
+                "m_offset": 6180
+              },
+              {
+                "zone_id": 1,
+                "m_offset": 7140
+              },
+              {
+                "zone_id": 0,
+                "m_offset": 7620
+              },
+              {
+                "zone_id": 1,
+                "m_offset": 8580
+              },
+              {
+                "zone_id": 0,
+                "m_offset": 9180
+              },
+              {
+                "zone_id": 1,
+                "m_offset": 10020
+              }
+            ],
+            "zones": [
+              {
+                "id": 0,
+                "name": "Comfort",
+                "type": 0,
+                "rooms": [
+                  {
+                    "id": "2746182631",
+                    "therm_setpoint_temperature": 20
+                  },
+                  {
+                    "id": "1111111111",
+                    "therm_setpoint_temperature": 21
+                  }
+                ]
+              },
+              {
+                "id": 1,
+                "name": "Notte",
+                "type": 1,
+                "rooms": [
+                  {
+                    "id": "2746182631",
+                    "therm_setpoint_temperature": 17
+                  },
+                  {
+                    "id": "1111111111",
+                    "therm_setpoint_temperature": 16
+                  }
+                ]
+              },
+              {
+                "id": 4,
+                "name": "Eco",
+                "type": 5,
+                "rooms": [
+                  {
+                    "id": "2746182631",
+                    "therm_setpoint_temperature": 18.5
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "modules": [
+          {
+            "id": "70:ee:50:00:00:01",
+            "type": "NAPlug",
+            "name": "Rel\u00e8",
+            "setup_date": 1600000000
+          },
+          {
+            "id": "09:00:00:aa:bb:cc",
+            "type": "NRV",
+            "name": "Valvola Studio",
+            "room_id": "2746182631",
+            "bridge": "70:ee:50:00:00:01"
+          },
+          {
+            "id": "09:00:00:aa:bb:01",
+            "type": "NRV",
+            "name": "Valvola finestra",
+            "room_id": "1111111111",
+            "bridge": "70:ee:50:00:00:01"
+          },
+          {
+            "id": "09:00:00:aa:bb:02",
+            "type": "NRV",
+            "name": "",
+            "room_id": "1111111111",
+            "bridge": "70:ee:50:00:00:01"
+          }
+        ]
+      }
+    ]
+  },
+  "status": "ok",
+  "time_server": 1763380800
+}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Programma riscaldamento</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="tabs" aria-label="Pagine">
+    <a href="index.html">Stato</a>
+    <a href="schedule.html" aria-current="page">Programma</a>
+  </nav>
+  <header>
+    <div>
+      <h1 id="sched-name">Programma</h1>
+      <p id="sched-updated" class="muted">Caricamento…</p>
+    </div>
+    <label class="room-picker">
+      <span class="label">Stanza</span>
+      <select id="room-select"></select>
+    </label>
+  </header>
+
+  <p id="message" class="message" hidden></p>
+
+  <main>
+    <section class="panel now-panel">
+      <h2>Adesso</h2>
+      <div id="now"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Fasce e temperature</h2>
+      <div class="table-wrap">
+        <table>
+          <thead id="zones-head"></thead>
+          <tbody id="zones-body"></tbody>
+        </table>
+      </div>
+      <p id="extra-temps" class="muted"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Settimana</h2>
+      <div class="hours" aria-hidden="true"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+      <div id="week"></div>
+    </section>
+  </main>
+
+  <script src="schedule.js"></script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compensatore TRV</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="tabs" aria-label="Pagine">
+    <a href="index.html" aria-current="page">Stato</a>
+    <a href="schedule.html">Programma</a>
+  </nav>
+  <header>
+    <div>
+      <h1>Compensatore TRV</h1>
+      <p id="updated" class="muted">Caricamento…</p>
+    </div>
+    <button id="run-btn" type="button">Leggi ora</button>
+  </header>
+
+  <p id="message" class="message" hidden></p>
+
+  <main>
+    <section class="grid" aria-label="Stato attuale">
+      <div class="card"><span class="label">Valvola</span><span class="value" id="t_valve">–</span></div>
+      <div class="card"><span class="label">Stazione meteo</span><span class="value" id="t_module">–</span><span class="sub" id="module_age"></span></div>
+      <div class="card"><span class="label">Offset</span><span class="value" id="offset">–</span></div>
+      <div class="card"><span class="label">Target programma</span><span class="value" id="target">–</span></div>
+      <div class="card"><span class="label">Setpoint valvola</span><span class="value" id="current_sp">–</span><span class="sub" id="room_mode"></span></div>
+      <div class="card"><span class="label">Setpoint calcolato</span><span class="value" id="new_sp">–</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Decisione</h2>
+      <p><span id="decision" class="badge">–</span> <span id="dry_run" class="badge muted-badge" hidden>dry run</span></p>
+      <p id="error" class="error" hidden></p>
+    </section>
+
+    <section class="panel">
+      <h2>Stanze</h2>
+      <p class="muted">Caldaia: <strong id="boiler">–</strong></p>
+      <div class="table-wrap">
+        <table class="rooms-table">
+          <thead><tr><th>Stanza</th><th class="num">Attuale</th><th class="num">Setpoint</th><th class="num">Richiesta</th></tr></thead>
+          <tbody id="rooms"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Ultime 24 ore</h2>
+      <div id="legend" class="legend"></div>
+      <div id="chart" class="chart" role="img" aria-label="Grafico temperature delle ultime 24 ore"></div>
+      <p id="chart-empty" class="muted" hidden>Nessun dato ancora.</p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

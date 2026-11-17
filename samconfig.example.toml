@@ -1,0 +1,26 @@
+# Copy to samconfig.toml (gitignored) and fill in, or run `sam deploy --guided`.
+# DashboardUser / DashboardPassword are NoEcho: pass them with `sam deploy --guided`
+# (they are not saved here) or add them to parameter_overrides locally.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "netatmo-trv-compensator"
+region = "eu-central-1"
+profile = "your-aws-profile"
+
+[default.build.parameters]
+cached = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "netatmo-trv-compensator"
+parameter_overrides = [
+  "HomeId=your-home-id",
+  "RoomId=your-room-id",
+  "StationDeviceId=70:ee:50:xx:xx:xx",
+  "DryRun=true",
+  "ParameterPrefix=/netatmo-trv",
+  "AlarmEmail=you@example.com",
+]
