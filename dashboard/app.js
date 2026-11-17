@@ -48,7 +48,13 @@ function render(st) {
   $('t_module').textContent = fmtT(st.t_module);
   $('module_age').textContent = st.module_age_min !== undefined ? `dato di ${st.module_age_min} min fa` : '';
   $('offset').textContent = fmtOffset(st.offset);
-  $('target').textContent = fmtT(st.target);
+  // Effective base of the compensation: the slot target, or a higher one when anticipating.
+  const base = st.base ?? st.target;
+  $('target').textContent = fmtT(base);
+  let note = st.target !== undefined && st.target !== null ? `fascia attuale ${fmtT(st.target)}` : '';
+  if (st.base_reason === 'netatmo_anticipation') note = `anticipo Netatmo · fascia ${fmtT(st.target)}`;
+  if (st.base_reason === 'lookahead') note = `prossima fascia · ora ${fmtT(st.target)}`;
+  $('target_note').textContent = note;
   $('current_sp').textContent = fmtT(st.current_sp);
   $('room_mode').textContent = st.room_mode ? MODES[st.room_mode] || st.room_mode : '';
   $('new_sp').textContent = fmtT(st.new_sp);
@@ -170,6 +176,7 @@ function renderRooms(st) {
       }
       if (r.compensated) notes.push('compensata');
       if (r.open_window) notes.push('finestra aperta');
+      if (r.anticipating) notes.push('anticipo in corso');
       if (r.reachable === false) notes.push('non raggiungibile');
       if (notes.length) {
         const small = document.createElement('div');
@@ -203,7 +210,7 @@ function renderRooms(st) {
 const SERIES = [
   { key: 't_valve', label: 'Valvola', color: '--s-valve' },
   { key: 't_module', label: 'Stazione', color: '--s-module' },
-  { key: 'target', label: 'Target programma', color: '--s-target', dash: '4 4' },
+  { key: 'target', label: 'Target', color: '--s-target', dash: '4 4' },
   { key: 'new_sp', label: 'Setpoint calcolato', color: '--s-newsp', dash: '2 3' },
 ];
 
@@ -228,7 +235,7 @@ function renderChart(history) {
   const H = W < 500 ? 220 : 280, L = 36, R = 10, T = 10, B = 24;
   const labelEvery = W < 500 ? 6 : 3; // hours between x-axis labels
   const x0 = pts[0].ts, x1 = pts[pts.length - 1].ts;
-  const vals = pts.flatMap((p) => SERIES.map((s) => p[s.key])).filter((v) => typeof v === 'number');
+  const vals = pts.flatMap((p) => SERIES.map((s) => p[s.key]).concat(p.base)).filter((v) => typeof v === 'number');
   let y0 = Math.floor(Math.min(...vals) - 0.5), y1 = Math.ceil(Math.max(...vals) + 0.5);
   if (y1 - y0 < 2) y1 = y0 + 2;
   const sx = (t) => L + ((t - x0) / Math.max(1, x1 - x0)) * (W - L - R);
@@ -261,7 +268,7 @@ function renderChart(history) {
     let d = '';
     let pen = false;
     pts.forEach((p) => {
-      const v = p[s.key];
+      const v = s.key === 'target' && typeof p.base === 'number' ? p.base : p[s.key];
       if (typeof v !== 'number') { pen = false; return; }
       d += `${pen ? 'L' : 'M'}${sx(p.ts).toFixed(1)},${sy(v).toFixed(1)}`;
       pen = true;

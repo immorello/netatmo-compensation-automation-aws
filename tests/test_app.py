@@ -99,11 +99,11 @@ def room(**kw):
 
 
 def run_decide(cfg=None, *, home_mode="schedule", room_status=None, state=None, target=20.0,
-               t_module=20.5, module_time=NOW - 120):
+               t_module=20.5, module_time=NOW - 120, upcoming=None):
     log = {}
     d = app.decide(cfg or make_config(), home_mode=home_mode, room=room_status or room(),
                    state=state or {}, target=target, t_module=t_module,
-                   module_time=module_time, now_ts=NOW, log=log)
+                   module_time=module_time, now_ts=NOW, log=log, upcoming=upcoming)
     return d, log
 
 
@@ -378,3 +378,63 @@ def test_room_devices(monday_10):
     assert salone[0]["battery_state"] == "low" and salone[0]["rf_strength"] == 82
     assert salone[1]["name"] is None and salone[1]["reachable"] is False
     assert salone[1]["battery_state"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Anticipation: Netatmo pre-heat and look-ahead
+# --------------------------------------------------------------------------- #
+class TestAnticipation:
+    def test_upcoming_setpoint_window(self, home):
+        # Monday 06:30: comfort (20) starts at 07:00
+        assert app.upcoming_setpoint(home, ROOM_ID, rome(2026, 11, 16, 6, 30), 60) == 20.0
+        assert app.upcoming_setpoint(home, ROOM_ID, rome(2026, 11, 16, 6, 30), 20) is None
+        assert app.upcoming_setpoint(home, ROOM_ID, rome(2026, 11, 16, 5, 0), 60) is None
+        assert app.upcoming_setpoint(home, ROOM_ID, rome(2026, 11, 16, 6, 30), 0) is None
+
+    def test_upcoming_setpoint_wraps_sunday_to_monday(self, home):
+        sched = app.selected_schedule(home)
+        sched["timetable"] = [s for s in sched["timetable"] if s["m_offset"] != 0]
+        # Sunday 23:30 -> Monday 07:00 comfort is 450 minutes ahead
+        assert app.upcoming_setpoint(home, ROOM_ID, rome(2026, 11, 22, 23, 30), 450) == 20.0
+        assert app.upcoming_setpoint(home, ROOM_ID, rome(2026, 11, 22, 23, 30), 449) is None
+
+    def test_netatmo_anticipation_is_kept(self):
+        # Real case: slot target 19, Netatmo already pre-heating to 20, valve 20.0, station 19.3
+        r = room(therm_measured_temperature=20.0, therm_setpoint_temperature=20.0, anticipating=True)
+        d, log = run_decide(room_status=r, target=19.0, t_module=19.3)
+        assert log["base"] == 20.0 and log["base_reason"] == "netatmo_anticipation"
+        assert d.action == "write" and d.new_sp == 20.5  # 20 + 0.7 -> 20.5, not 19.5
+
+    def test_lookahead_when_in_our_manual(self):
+        end = NOW + 30 * 60
+        state = {"last_setpoint": 19.5, "last_endtime": end}
+        r = room(therm_setpoint_mode="manual", therm_setpoint_temperature=19.5,
+                 therm_setpoint_end_time=end, therm_measured_temperature=20.0)
+        d, log = run_decide(room_status=r, state=state, target=19.0, t_module=19.3, upcoming=20.0)
+        assert log["base_reason"] == "lookahead"
+        assert d.action == "write" and d.new_sp == 20.5
+
+    def test_lookahead_ignored_when_lower_or_absent(self):
+        end = NOW + 30 * 60
+        state = {"last_setpoint": 21.5, "last_endtime": end}
+        r = room(therm_setpoint_mode="manual", therm_setpoint_temperature=21.5,
+                 therm_setpoint_end_time=end)
+        for upcoming in (None, 17.0):
+            d, log = run_decide(room_status=r, state=state, upcoming=upcoming)
+            assert log["base"] == 20.0 and log["base_reason"] == "schedule"
+
+    def test_lookahead_not_used_while_netatmo_follows_schedule(self):
+        # Not our manual and no Netatmo anticipation yet: we don't pre-heat earlier than Netatmo.
+        d, log = run_decide(upcoming=22.0)
+        assert log["base"] == 20.0 and log["base_reason"] == "schedule"
+
+    def test_schedule_mode_lower_current_sp_uses_target(self):
+        d, log = run_decide(room_status=room(therm_setpoint_temperature=18.0))
+        assert log["base"] == 20.0 and log["base_reason"] == "schedule"
+
+    def test_run_logs_anticipation_fields(self, monday_10):
+        _, _, _, go = make_run(monday_10)
+        log = go()
+        assert log["base_reason"] == "schedule"
+        assert "upcoming_target" in log and "anticipating" in log
+        assert all("anticipating" in r for r in log["rooms"])

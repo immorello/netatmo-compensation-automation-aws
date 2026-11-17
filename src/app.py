@@ -52,6 +52,7 @@ class Config:
     manual_duration_minutes: int = 40
     renew_before_minutes: int = 15
     max_sensor_age_minutes: int = 30
+    anticipation_minutes: int = 60
     dry_run: bool = True
     parameter_prefix: str = "/netatmo-trv"
 
@@ -69,6 +70,7 @@ class Config:
             manual_duration_minutes=int(e.get("MANUAL_DURATION_MINUTES", "40")),
             renew_before_minutes=int(e.get("RENEW_BEFORE_MINUTES", "15")),
             max_sensor_age_minutes=int(e.get("MAX_SENSOR_AGE_MINUTES", "30")),
+            anticipation_minutes=int(e.get("ANTICIPATION_MINUTES", "60")),
             # Anything other than an explicit "false" keeps dry run on.
             dry_run=e.get("DRY_RUN", "true").strip().lower() != "false",
             parameter_prefix=e.get("PARAMETER_PREFIX", "/netatmo-trv").rstrip("/"),
@@ -292,6 +294,20 @@ def selected_schedule(home: dict) -> Optional[dict]:
     return None
 
 
+def _zone_room_temp(sched: dict, zone_id, room_id: str) -> Optional[float]:
+    zone = next((z for z in sched.get("zones", []) if z.get("id") == zone_id), None)
+    if zone is None:
+        return None
+    for room in zone.get("rooms", []):
+        if str(room.get("id")) == room_id and room.get("therm_setpoint_temperature") is not None:
+            return float(room["therm_setpoint_temperature"])
+    # Older schedules expose per-room temperatures as rooms_temp[].
+    for room in zone.get("rooms_temp", []):
+        if str(room.get("room_id")) == room_id and room.get("temp") is not None:
+            return float(room["temp"])
+    return None
+
+
 def scheduled_setpoint(home: dict, room_id: str, now_utc: datetime) -> Optional[float]:
     """Setpoint of the active schedule slot for ``room_id`` at ``now_utc``.
 
@@ -313,18 +329,26 @@ def scheduled_setpoint(home: dict, room_id: str, now_utc: datetime) -> Optional[
             break
     if active is None:
         active = slots[-1]  # wrap Sunday -> Monday
+    return _zone_room_temp(sched, active["zone_id"], room_id)
 
-    zone = next((z for z in sched.get("zones", []) if z.get("id") == active["zone_id"]), None)
-    if zone is None:
+
+def upcoming_setpoint(home: dict, room_id: str, now_utc: datetime, minutes: int) -> Optional[float]:
+    """Highest setpoint for ``room_id`` among the slots starting within the next
+    ``minutes`` (wrapping Sunday -> Monday). None if no slot starts in that window."""
+    if minutes <= 0:
         return None
-    for room in zone.get("rooms", []):
-        if str(room.get("id")) == room_id and room.get("therm_setpoint_temperature") is not None:
-            return float(room["therm_setpoint_temperature"])
-    # Older schedules expose per-room temperatures as rooms_temp[].
-    for room in zone.get("rooms_temp", []):
-        if str(room.get("room_id")) == room_id and room.get("temp") is not None:
-            return float(room["temp"])
-    return None
+    sched = selected_schedule(home)
+    if not sched or not sched.get("timetable"):
+        return None
+    now_min = minutes_since_monday(now_utc, home["timezone"])
+    temps = []
+    for slot in sched["timetable"]:
+        delta = (slot["m_offset"] - now_min) % MINUTES_PER_WEEK
+        if 0 < delta <= minutes:
+            t = _zone_room_temp(sched, slot["zone_id"], room_id)
+            if t is not None:
+                temps.append(t)
+    return max(temps) if temps else None
 
 
 def find_room_status(homestatus: dict, room_id: str) -> dict:
@@ -393,6 +417,7 @@ def rooms_overview(home: dict, homestatus: dict, own_room_id: str) -> list:
             "power": r.get("heating_power_request"),
             "reachable": r.get("reachable"),
             "open_window": r.get("open_window"),
+            "anticipating": r.get("anticipating"),
             "compensated": rid == own_room_id,
             "devices": devices.get(rid, []),
         })
@@ -469,15 +494,37 @@ class Decision:
         return f"skip:{self.reason}" if self.action == "skip" else self.action
 
 
+def compensation_base(*, target: float, room_mode: Optional[str], ours: bool,
+                      current_sp: Optional[float], upcoming: Optional[float]) -> tuple:
+    """Temperature to compensate on top of, and why.
+
+    - Room following the schedule: Netatmo may already be anticipating the next
+      slot (therm_setpoint_temperature above the slot's target). Keep that.
+    - Room in our manual: Netatmo no longer anticipates, so look ahead at the
+      slots starting soon and use the highest one.
+    """
+    if not ours and room_mode in ("schedule", "home") and current_sp is not None \
+            and float(current_sp) > target:
+        return float(current_sp), "netatmo_anticipation"
+    if ours and upcoming is not None and upcoming > target:
+        return upcoming, "lookahead"
+    return target, "schedule"
+
+
 def decide(cfg: Config, *, home_mode: Optional[str], room: dict, state: dict,
            target: Optional[float], t_module: Optional[float], module_time: Optional[int],
-           now_ts: int, log: dict) -> Decision:
-    """Pure decision function. Fills ``log`` with the computed values."""
+           now_ts: int, log: dict, upcoming: Optional[float] = None) -> Decision:
+    """Pure decision function. Fills ``log`` with the computed values.
+
+    ``target`` is the setpoint of the current schedule slot, ``upcoming`` the
+    highest setpoint of the slots starting within ``anticipation_minutes``.
+    """
     t_valve = room.get("therm_measured_temperature")
     room_mode = room.get("therm_setpoint_mode")
     current_sp = room.get("therm_setpoint_temperature")
     log.update(t_valve=t_valve, t_module=t_module, room_mode=room_mode,
-               current_sp=current_sp, target=target, home_mode=home_mode)
+               current_sp=current_sp, target=target, home_mode=home_mode,
+               anticipating=room.get("anticipating"), upcoming_target=upcoming)
 
     if home_mode != "schedule":
         return Decision("skip", f"home_mode_{home_mode}")
@@ -503,9 +550,13 @@ def decide(cfg: Config, *, home_mode: Optional[str], room: dict, state: dict,
     if target is None:
         return Decision("skip", "no_scheduled_setpoint")
 
+    base, base_reason = compensation_base(target=target, room_mode=room_mode, ours=ours,
+                                          current_sp=current_sp, upcoming=upcoming)
+    log.update(base=base, base_reason=base_reason)
+
     offset = clamp(float(t_valve) - float(t_module), cfg.min_offset, cfg.max_offset)
     log["offset"] = round(offset, 2)
-    new_sp = clamp(round_half(target + offset), SP_MIN, SP_MAX)
+    new_sp = clamp(round_half(base + offset), SP_MIN, SP_MAX)
     log["new_sp"] = new_sp
 
     if offset < RELEASE_OFFSET_THRESHOLD:
@@ -555,11 +606,13 @@ def run(cfg: Config, store: SsmStore, api: NetatmoClient, now: Optional[datetime
     log["heating_power_request"] = room.get("heating_power_request")
     home_mode = home.get("therm_mode") or status.get("body", {}).get("home", {}).get("therm_mode")
     target = scheduled_setpoint(home, cfg.room_id, now)
+    upcoming = upcoming_setpoint(home, cfg.room_id, now, cfg.anticipation_minutes)
     t_module, module_time = reference_reading(stations, cfg.station_device_id, cfg.indoor_module_id)
     state = store.get_state()
 
     decision = decide(cfg, home_mode=home_mode, room=room, state=state, target=target,
-                      t_module=t_module, module_time=module_time, now_ts=now_ts, log=log)
+                      t_module=t_module, module_time=module_time, now_ts=now_ts, log=log,
+                      upcoming=upcoming)
     log["decision"] = decision.label
     log.setdefault("new_sp", decision.new_sp)
 
@@ -586,7 +639,7 @@ def _emit(record: dict) -> None:
 # Dashboard status (S3) - diagnostics only, never affects the valve logic
 # --------------------------------------------------------------------------- #
 HISTORY_KEEP_S = 24 * 3600
-HISTORY_FIELDS = ("ts", "trigger", "decision", "t_valve", "t_module", "target", "offset",
+HISTORY_FIELDS = ("ts", "trigger", "decision", "t_valve", "t_module", "target", "base", "offset",
                   "new_sp", "current_sp", "room_mode", "heating_power_request", "boiler_status")
 
 

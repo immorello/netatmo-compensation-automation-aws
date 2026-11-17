@@ -44,6 +44,11 @@ Parameters:
     Type: Number
     Default: 30
     Description: Module readings older than this are considered stale
+  AnticipationMinutes:
+    Type: Number
+    Default: 60
+    MinValue: 0
+    Description: While in our manual setpoint, start using a higher upcoming slot this many minutes early (0 = off)
   DryRun:
     Type: String
     Default: "true"
@@ -101,6 +106,7 @@ Resources:
           MANUAL_DURATION_MINUTES: !Ref ManualDurationMinutes
           RENEW_BEFORE_MINUTES: !Ref RenewBeforeMinutes
           MAX_SENSOR_AGE_MINUTES: !Ref MaxSensorAgeMinutes
+          ANTICIPATION_MINUTES: !Ref AnticipationMinutes
           DRY_RUN: !Ref DryRun
           PARAMETER_PREFIX: !Ref ParameterPrefix
           DASHBOARD_BUCKET: !If [HasDashboard, !Ref DashboardBucket, ""]

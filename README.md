@@ -53,8 +53,10 @@ Every 10 minutes the function:
 2. computes the offset and the corrected setpoint:
    ```
    offset = clamp(T_valve − T_station, MinOffset, MaxOffset)    # default 0…3 °C
-   new_sp = clamp(round_to_0.5(scheduled_target + offset), 7, 30)
+   new_sp = clamp(round_to_0.5(base + offset), 7, 30)
    ```
+   where `base` is the scheduled target, or a higher one when pre-heating for
+   the next slot (see [Anticipation](#anticipation));
 3. sets a **manual** setpoint of `new_sp` on the valve, valid for **40 minutes**,
    and renews it on every run while it is needed;
 4. puts the room back on the schedule once the offset disappears.
@@ -63,6 +65,20 @@ Example: the schedule asks for 20 °C, the valve reads 22.4 °C and the station
 20.1 °C. The offset is 2.3, so the function sets 22.5 °C on the valve. The
 valve keeps heating until the room, as measured by the station, really is
 around 20 °C.
+
+### Anticipation
+
+Netatmo normally starts heating before a comfort slot begins ("Auto-adapt" in
+the app), raising the room setpoint ahead of the schedule. The compensation
+builds on top of that instead of cancelling it:
+
+- **Room following the schedule:** if Netatmo is already pre-heating (the
+  room's current setpoint is above the slot's target), that setpoint is used as
+  the base. Example: slot at 19 °C, Netatmo pre-heating to 20 °C, offset 0.7 →
+  20.5 °C, not 19.5 °C.
+- **Room in the compensated manual mode:** Netatmo no longer anticipates, so the
+  function looks ahead: if a warmer slot starts within `AnticipationMinutes`
+  (default 60), its temperature is used as the base already.
 
 ### Safety: it switches itself off
 
@@ -330,6 +346,7 @@ Set them in `samconfig.toml` (`parameter_overrides`) or during the guided deploy
 | `ManualDurationMinutes` | `40` | duration of the manual setpoint, i.e. the maximum time before the fail-safe kicks in |
 | `RenewBeforeMinutes` | `15` | renew the manual setpoint when fewer than N minutes are left |
 | `MaxSensorAgeMinutes` | `30` | station readings older than this are ignored |
+| `AnticipationMinutes` | `60` | while in the compensated manual mode, use a warmer upcoming slot this many minutes early (0 = off) |
 | `DryRun` | `true` | `true` = observe and log without writing to the valve |
 | `ParameterPrefix` | `/netatmo-trv` | prefix of the SSM parameters |
 | `AlarmEmail` | empty | email for the alarm; empty = no alarm |
@@ -395,9 +412,9 @@ To validate the template: `sam validate --lint`.
 - **Temperature and setpoint are per room, not per valve.** The Netatmo API
   does not expose the temperature of a single valve. In a room with two valves,
   both receive the same setpoint, computed on the room temperature.
-- **Netatmo's anticipation is lost.** While the room is in the compensated
-  manual mode, the valve does not pre-heat before a comfort slot. When the slot
-  changes, the function catches up within 10 minutes.
+- **Anticipation is approximated.** Netatmo's own pre-heating adapts to how
+  fast each room warms up. While the room is in the compensated manual mode it
+  is replaced by a fixed look-ahead window (`AnticipationMinutes`).
 - **Heat request and boiler.** By raising the setpoint, the compensated valve
   requests heat for longer. If the boiler is controlled by the Netatmo
   thermostat, it stays on longer, and rooms without a valve (for example the
