@@ -411,3 +411,7 @@ To validate the template: `sam validate --lint`.
 - **Least privilege.** The Lambda can only read and write `/netatmo-trv/*` in
   SSM and `data/*` in the dashboard bucket. It uses the AWS managed KMS key
   `aws/ssm`, with no customer-managed keys.
+
+## License
+
+[MIT](LICENSE)
